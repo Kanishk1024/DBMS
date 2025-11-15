@@ -1,0 +1,116 @@
+Index Building Methods Comparison
+Generated on: Fri 07 Nov 2025 02:14:28 AM IST
+==================================================
+
+METHOD 1: INCREMENTAL INSERTS
+----------------------------------------------
+==============================================
+Method 1: Incremental Index Building
+==============================================
+
+Method 1: Incremental Inserts (as data arrives)
+  Indexed 1000 records...
+  Indexed 2000 records...
+  Indexed 3000 records...
+  Indexed 4000 records...
+  Indexed 5000 records...
+  Indexed 6000 records...
+  Indexed 7000 records...
+  Indexed 8000 records...
+  Indexed 9000 records...
+  Indexed 10000 records...
+  Indexed 11000 records...
+  Indexed 12000 records...
+  Indexed 13000 records...
+  Indexed 14000 records...
+  Indexed 15000 records...
+  Indexed 16000 records...
+
+=== Method 1: Incremental Inserts ===
+Records indexed:     16042
+Build time:          0.04 seconds
+Page reads:          48126
+Page writes:         16042
+Tree height:         3
+Leaf nodes:          321
+Internal nodes:      7
+Total nodes:         328
+Avg time per record: 0.0023 ms
+========================================
+
+
+METHOD 2: SORTED BULK CREATION
+----------------------------------------------
+==============================================
+Method 2: Sorted Bulk Index Building
+==============================================
+
+Method 2: Bulk Sorted Index Building
+  Step 1: Loading all records into memory...
+    Loaded 5000 records...
+    Loaded 10000 records...
+    Loaded 15000 records...
+  Loaded 16042 records
+
+  Step 2: Sorting entries by roll_no...
+  Sorted in 0.00 seconds
+
+  Step 3: Building B+ tree from sorted data...
+    Inserted 5000/16042 keys...
+    Inserted 10000/16042 keys...
+    Inserted 15000/16042 keys...
+  Index built in 0.00 seconds
+  Total time (sort + insert): 0.00 seconds
+
+
+=== Method 2: Sorted Bulk Creation ===
+Records indexed:     16042
+Build time:          0.00 seconds
+Page reads:          32084
+Page writes:         8021
+Tree height:         3
+Leaf nodes:          321
+Internal nodes:      7
+Total nodes:         328
+Avg time per record: 0.0002 ms
+========================================
+
+
+METHOD 3: OPTIMIZED BULK LOADING
+----------------------------------------------
+==============================================
+Method 3: Optimized Bulk Loading
+==============================================
+
+Method 3: Optimized Bulk Loading
+  Step 1: Loading all records into memory...
+    Loaded 5000 records...
+    Loaded 10000 records...
+    Loaded 15000 records...
+  Loaded 16042 records
+
+  Step 2: Sorting entries by roll_no...
+  Sorted in 0.00 seconds
+
+  Step 3: Building B+ tree bottom-up...
+    Created 321 leaf nodes
+    Created 7 internal nodes at level 2
+    Created 1 internal nodes at level 3
+  Tree built in 0.00 seconds
+  Total time (sort + build): 0.00 seconds
+  Tree height: 3
+
+
+=== Method 3: Bulk Loading ===
+Records indexed:     16042
+Build time:          0.00 seconds
+Page reads:          0
+Page writes:         329
+Tree height:         3
+Leaf nodes:          321
+Internal nodes:      8
+Total nodes:         329
+Avg time per record: 0.0002 ms
+========================================
+
+

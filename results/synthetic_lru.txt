@@ -1,0 +1,28 @@
+Creating test file with 100 pages...
+
+Buffer Strategy: LRU
+Running 10000 operations on 100 pages
+
+Read%	Write%	Hits	Misses	PhysRead	PhysWrite	HitRatio
+--------------------------------------------------------------------
+100	0	1931	8069	8069		8069		0.1931
+90	10	1931	8069	8069		8069		0.1931
+70	30	1931	8069	8069		8069		0.1931
+50	50	1931	8069	8069		8069		0.1931
+30	70	1931	8069	8069		8069		0.1931
+10	90	1931	8069	8069		8069		0.1931
+0	100	1931	8069	8069		8069		0.1931
+
+
+========== Buffer Statistics ==========
+Logical Reads:           10000
+Logical Writes:          10000
+Physical Reads:           8069
+Physical Writes:          8069
+Buffer Hits:              1931
+Buffer Misses:            8069
+Hit Ratio:               19.31%
+Strategy:           LRU
+=======================================
+
+Test completed successfully!
