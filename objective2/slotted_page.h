@@ -5,14 +5,15 @@
 #define SP_HEADER_SIZE 32
 #define SP_SLOT_SIZE 4
 
-// Error codes
+/* Return / error codes */
 #define SP_OK 0
 #define SP_ERROR -1
 #define SP_NO_SPACE -2
 #define SP_INVALID_SLOT -3
 
-// Slotted page header
-typedef struct {
+/* Page header layout */
+typedef struct
+{
     int page_id;
     short num_slots;
     short free_space_offset;
@@ -22,27 +23,30 @@ typedef struct {
     char reserved[8];
 } SlottedPageHeader;
 
-// Slot entry
-typedef struct {
+/* Directory entry for records */
+typedef struct
+{
     short offset;
     short length;
 } SlotEntry;
 
-// Record ID
-typedef struct {
+/* Identifier for a record location */
+typedef struct
+{
     int page_num;
     int slot_num;
 } RecordID;
 
-// Scan handle
-typedef struct {
+/* Scan state for iterating pages/slots */
+typedef struct
+{
     int fd;
     int curr_page;
     int curr_slot;
     int total_pages;
 } SP_ScanHandle;
 
-// Function prototypes
+/* API exposed for slotted page operations */
 int SP_InitPage(char *page_data);
 int SP_InsertRecord(char *page_data, char *record, short rec_len, int *slot_num);
 int SP_DeleteRecord(char *page_data, int slot_num);

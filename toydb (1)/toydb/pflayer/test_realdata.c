@@ -6,271 +6,272 @@
 #include "pf.h"
 
 #define MAX_LINE_LENGTH 1024
-#define MAX_RECORDS_PER_PAGE 40
+#define RECORDS_PER_PAGE_LIMIT 40
 
-// CSV output file handles
-FILE *csv_lru = NULL;
-FILE *csv_mru = NULL;
-int csv_mode = 0;  // 0 = console only, 1 = console + CSV
+/* CSV handles */
+static FILE *out_csv_lru = NULL;
+static FILE *out_csv_mru = NULL;
+static int enable_csv = 0;
 
-typedef struct {
-    char *filename;
-    char *db_filename;
-    int num_records;
-} DataFile;
+typedef struct
+{
+    const char *text_path;
+    const char *db_name;
+    int record_count;
+} TextDataset;
 
-// Relative paths from pflayer directory to data folder
-DataFile data_files[] = {
+/* relative paths from pflayer */
+static TextDataset datasets[] = {
     {"../../../data/student.txt", "student.db", 0},
     {"../../../data/courses.txt", "courses.db", 0},
     {"../../../data/department.txt", "department.db", 0},
     {"../../../data/program.txt", "program.db", 0},
     {"../../../data/studemail.txt", "studemail.db", 0},
-    {NULL, NULL, 0}
-};
+    {NULL, NULL, 0}};
 
-int load_data_to_db(const char *text_file, const char *db_file, int *record_count) {
-    FILE *fp = fopen(text_file, "r");
-    if (!fp) {
-        printf("Warning: Cannot open %s, skipping...\n", text_file);
+static int import_text_into_db(const char *txtfile, const char *dbfile, int *out_count)
+{
+    FILE *fin = fopen(txtfile, "r");
+    if (!fin)
+    {
+        printf("Warning: %s not found, skipping\n", txtfile);
         return -1;
     }
-    
-    static int pf_initialized = 0;
-    if (!pf_initialized) {
+
+    static int pf_is_ready = 0;
+    if (!pf_is_ready)
+    {
         PF_Init();
-        pf_initialized = 1;
+        pf_is_ready = 1;
     }
-    
-    if (PF_CreateFile(db_file) != PFE_OK) {
-        fclose(fp);
+
+    if (PF_CreateFile(dbfile) != PFE_OK)
+    {
+        fclose(fin);
         return -1;
     }
-    
-    int fd = PF_OpenFile(db_file);
-    if (fd < 0) {
-        fclose(fp);
+
+    int fd = PF_OpenFile(dbfile);
+    if (fd < 0)
+    {
+        fclose(fin);
         return -1;
     }
-    
+
     char line[MAX_LINE_LENGTH];
-    int total_records = 0;
-    int records_in_page = 0;
+    int total = 0;
+    int in_page = 0;
     char *pagebuf = NULL;
-    int pagenum;
-    int offset = 0;
-    
-    // Skip header
-    if (fgets(line, sizeof(line), fp) == NULL) {
-        fclose(fp);
+    int pnum = 0;
+    int used = 0;
+
+    /* skip header line */
+    if (fgets(line, sizeof(line), fin) == NULL)
+    {
+        fclose(fin);
         PF_CloseFile(fd);
-        PF_DestroyFile(db_file);
+        PF_DestroyFile(dbfile);
         return -1;
     }
-    
-    // Allocate first page
-    if (PF_AllocPage(fd, &pagenum, &pagebuf) != PFE_OK) {
-        fclose(fp);
+
+    if (PF_AllocPage(fd, &pnum, &pagebuf) != PFE_OK)
+    {
+        fclose(fin);
         PF_CloseFile(fd);
-        PF_DestroyFile(db_file);
+        PF_DestroyFile(dbfile);
         return -1;
     }
-    
-    while (fgets(line, sizeof(line), fp) != NULL) {
-        int line_len = strlen(line);
-        
-        if (offset + line_len >= PF_PAGE_SIZE || records_in_page >= MAX_RECORDS_PER_PAGE) {
-            PF_UnfixPage(fd, pagenum, TRUE);
-            
-            if (PF_AllocPage(fd, &pagenum, &pagebuf) != PFE_OK) {
-                fclose(fp);
+
+    while (fgets(line, sizeof(line), fin) != NULL)
+    {
+        int len = strlen(line);
+        if (used + len >= PF_PAGE_SIZE || in_page >= RECORDS_PER_PAGE_LIMIT)
+        {
+            PF_UnfixPage(fd, pnum, TRUE);
+            if (PF_AllocPage(fd, &pnum, &pagebuf) != PFE_OK)
+            {
+                fclose(fin);
                 PF_CloseFile(fd);
-                PF_DestroyFile(db_file);
+                PF_DestroyFile(dbfile);
                 return -1;
             }
-            offset = 0;
-            records_in_page = 0;
+            used = 0;
+            in_page = 0;
         }
-        
-        memcpy(pagebuf + offset, line, line_len);
-        offset += line_len;
-        records_in_page++;
-        total_records++;
+        memcpy(pagebuf + used, line, len);
+        used += len;
+        in_page++;
+        total++;
     }
-    
-    if (pagebuf != NULL) {
-        PF_UnfixPage(fd, pagenum, TRUE);
-    }
-    
-    fclose(fp);
+
+    if (pagebuf)
+        PF_UnfixPage(fd, pnum, TRUE);
+
+    fclose(fin);
     PF_CloseFile(fd);
-    
-    *record_count = total_records;
+
+    *out_count = total;
     return 0;
 }
 
-void run_read_write_mixture(const char *db_file, int num_pages, int num_ops, int read_pct, int write_pct) {
-    int fd = PF_OpenFile(db_file);
-    if (fd < 0) {
-        printf("Failed to open %s\n", db_file);
+static void simulate_io_mix(const char *dbfile, int page_count, int ops, int read_percent, int write_percent)
+{
+    int fd = PF_OpenFile(dbfile);
+    if (fd < 0)
+    {
+        printf("Unable to open %s\n", dbfile);
         return;
     }
-    
+
     char *pagebuf;
-    
-    for (int i = 0; i < num_ops; i++) {
-        int pagenum = rand() % num_pages;
-        int op = rand() % 100;
-        
-        if (op < read_pct) {
-            // Read operation
-            if (PF_GetThisPage(fd, pagenum, &pagebuf) == PFE_OK) {
-                volatile int value = *(int*)pagebuf;
-                (void)value;
-                PF_UnfixPage(fd, pagenum, FALSE);
+    for (int i = 0; i < ops; ++i)
+    {
+        int pnum = rand() % page_count;
+        int choice = rand() % 100;
+        if (choice < read_percent)
+        {
+            if (PF_GetThisPage(fd, pnum, &pagebuf) == PFE_OK)
+            {
+                volatile int tmp = *(int *)pagebuf;
+                (void)tmp;
+                PF_UnfixPage(fd, pnum, FALSE);
             }
-        } else {
-            // Write operation
-            if (PF_GetThisPage(fd, pagenum, &pagebuf) == PFE_OK) {
-                *(int*)pagebuf = i;
-                PF_UnfixPage(fd, pagenum, TRUE);
+        }
+        else
+        {
+            if (PF_GetThisPage(fd, pnum, &pagebuf) == PFE_OK)
+            {
+                *(int *)pagebuf = i;
+                PF_UnfixPage(fd, pnum, TRUE);
             }
         }
     }
-    
+
     PF_CloseFile(fd);
 }
 
-void test_with_real_data(DataFile *df, ReplacementStrategy strategy, const char *strategy_name) {
-    printf("\n=== Testing %s with %s strategy ===\n", df->filename, strategy_name);
-    
-    BUF_SetStrategy(strategy);
-    
-    int num_pages = (df->num_records / MAX_RECORDS_PER_PAGE) + 1;
-    if (num_pages < 10) num_pages = 10;
-    
-    printf("Records: %d, Estimated pages: %d\n\n", df->num_records, num_pages);
-    
-    // Different read/write mixtures as per project requirements
-    int mixtures[][2] = {
-        {100, 0},   // 100% read
-        {90, 10},   // 90% read, 10% write
-        {80, 20},   // 80% read, 20% write
-        {70, 30},   // 70% read, 30% write
-        {60, 40},   // 60% read, 40% write
-        {50, 50},   // 50% read, 50% write
-        {40, 60},   // 40% read, 60% write
-        {30, 70},   // 30% read, 70% write
-        {20, 80},   // 20% read, 80% write
-        {10, 90},   // 10% read, 90% write
-        {0, 100}    // 100% write
-    };
-    int num_mixtures = 11;
-    int num_ops = 5000;
-    
+static void evaluate_dataset(TextDataset *ds, ReplacementStrategy strat, const char *strat_name)
+{
+    printf("\n--- Dataset: %s (strategy: %s) ---\n", ds->text_path, strat_name);
+
+    BUF_SetStrategy(strat);
+
+    int estimated_pages = (ds->record_count / RECORDS_PER_PAGE_LIMIT) + 1;
+    if (estimated_pages < 10)
+        estimated_pages = 10;
+
+    printf("Records: %d  Estimated pages: %d\n\n", ds->record_count, estimated_pages);
+
+    int mixes[][2] = {
+        {100, 0}, {90, 10}, {80, 20}, {70, 30}, {60, 40}, {50, 50}, {40, 60}, {30, 70}, {20, 80}, {10, 90}, {0, 100}};
+    const int mixes_n = sizeof(mixes) / sizeof(mixes[0]);
+    const int ops = 5000;
+
     printf("Read%%\tWrite%%\tHits\tMisses\tPhysRead\tPhysWrite\tHitRatio\n");
     printf("--------------------------------------------------------------------\n");
-    
-    // Select CSV file based on strategy
-    FILE *csv_file = (strategy == REPLACE_LRU) ? csv_lru : csv_mru;
-    
-    for (int i = 0; i < num_mixtures; i++) {
+
+    FILE *csv = (strat == REPLACE_LRU) ? out_csv_lru : out_csv_mru;
+
+    for (int i = 0; i < mixes_n; ++i)
+    {
         BUF_ResetStatistics();
-        run_read_write_mixture(df->db_filename, num_pages, num_ops, mixtures[i][0], mixtures[i][1]);
-        
-        BufferStats stats;
-        BUF_GetStatistics(&stats);
-        
+        simulate_io_mix(ds->db_name, estimated_pages, ops, mixes[i][0], mixes[i][1]);
+
+        BufferStats s;
+        BUF_GetStatistics(&s);
+
         printf("%d\t%d\t%ld\t%ld\t%ld\t\t%ld\t\t%.4f\n",
-            mixtures[i][0], mixtures[i][1],
-            stats.buffer_hits, stats.buffer_misses,
-            stats.physical_reads, stats.physical_writes,
-            stats.hit_ratio);
-        
-        // Write to CSV if in CSV mode
-        if (csv_mode && csv_file) {
-            // Extract just the filename without path
-            const char *fname = strrchr(df->filename, '/');
-            fname = fname ? fname + 1 : df->filename;
-            
-            fprintf(csv_file, "%s,%d,%d,%d,%ld,%ld,%ld,%ld,%ld,%ld,%.4f\n",
-                fname, mixtures[i][0], mixtures[i][1], num_pages,
-                stats.logical_reads, stats.logical_writes,
-                stats.physical_reads, stats.physical_writes,
-                stats.buffer_hits, stats.buffer_misses,
-                stats.hit_ratio);
+               mixes[i][0], mixes[i][1],
+               s.buffer_hits, s.buffer_misses,
+               s.physical_reads, s.physical_writes,
+               s.hit_ratio);
+
+        if (enable_csv && csv)
+        {
+            const char *base = strrchr(ds->text_path, '/');
+            base = base ? base + 1 : ds->text_path;
+            fprintf(csv, "%s,%d,%d,%d,%ld,%ld,%ld,%ld,%ld,%ld,%.4f\n",
+                    base,
+                    mixes[i][0], mixes[i][1], estimated_pages,
+                    s.logical_reads, s.logical_writes,
+                    s.physical_reads, s.physical_writes,
+                    s.buffer_hits, s.buffer_misses,
+                    s.hit_ratio);
         }
     }
 }
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
     printf("=========================================\n");
     printf("Real Data Buffer Management Test\n");
     printf("=========================================\n\n");
-    
-    // Check for CSV mode
-    if (argc > 1 && strcmp(argv[1], "--csv") == 0) {
-        csv_mode = 1;
-        printf("CSV mode enabled - generating realdata_lru.csv and realdata_mru.csv\n\n");
-        
-        csv_lru = fopen("realdata_lru.csv", "w");
-        csv_mru = fopen("realdata_mru.csv", "w");
-        
-        if (!csv_lru || !csv_mru) {
-            fprintf(stderr, "Error: Failed to create CSV files\n");
+
+    if (argc > 1 && strcmp(argv[1], "--csv") == 0)
+    {
+        enable_csv = 1;
+        out_csv_lru = fopen("realdata_lru.csv", "w");
+        out_csv_mru = fopen("realdata_mru.csv", "w");
+        if (!out_csv_lru || !out_csv_mru)
+        {
+            fprintf(stderr, "Error: cannot create CSV output\n");
             return 1;
         }
-        
-        // Write CSV headers
-        fprintf(csv_lru, "Dataset,ReadPct,WritePct,NumPages,LogicalReads,LogicalWrites,PhysicalReads,PhysicalWrites,BufferHits,BufferMisses,HitRatio\n");
-        fprintf(csv_mru, "Dataset,ReadPct,WritePct,NumPages,LogicalReads,LogicalWrites,PhysicalReads,PhysicalWrites,BufferHits,BufferMisses,HitRatio\n");
+        fprintf(out_csv_lru, "Dataset,ReadPct,WritePct,NumPages,LogicalReads,LogicalWrites,PhysicalReads,PhysicalWrites,BufferHits,BufferMisses,HitRatio\n");
+        fprintf(out_csv_mru, "Dataset,ReadPct,WritePct,NumPages,LogicalReads,LogicalWrites,PhysicalReads,PhysicalWrites,BufferHits,BufferMisses,HitRatio\n");
+        printf("CSV mode on. Producing realdata_lru.csv and realdata_mru.csv\n\n");
     }
-    
-    srand(time(NULL));
-    
-    printf("Loading data files...\n");
-    for (int i = 0; data_files[i].filename != NULL; i++) {
-        printf("  Loading %s... ", data_files[i].filename);
+
+    srand((unsigned)time(NULL));
+
+    printf("Importing data files...\n");
+    for (int i = 0; datasets[i].text_path != NULL; ++i)
+    {
+        printf("  %s ... ", datasets[i].text_path);
         fflush(stdout);
-        
-        if (load_data_to_db(data_files[i].filename, 
-                           data_files[i].db_filename,
-                           &data_files[i].num_records) == 0) {
-            printf("Done (%d records)\n", data_files[i].num_records);
-        } else {
-            printf("Skipped\n");
+        if (import_text_into_db(datasets[i].text_path, datasets[i].db_name, &datasets[i].record_count) == 0)
+        {
+            printf("loaded (%d records)\n", datasets[i].record_count);
+        }
+        else
+        {
+            printf("skipped\n");
         }
     }
-    
+
     printf("\n");
-    
-    for (int i = 0; data_files[i].filename != NULL; i++) {
-        if (data_files[i].num_records > 0) {
-            test_with_real_data(&data_files[i], REPLACE_LRU, "LRU");
-            test_with_real_data(&data_files[i], REPLACE_MRU, "MRU");
+
+    for (int i = 0; datasets[i].text_path != NULL; ++i)
+    {
+        if (datasets[i].record_count > 0)
+        {
+            evaluate_dataset(&datasets[i], REPLACE_LRU, "LRU");
+            evaluate_dataset(&datasets[i], REPLACE_MRU, "MRU");
             printf("\n");
         }
     }
-    
-    printf("Cleaning up database files...\n");
-    for (int i = 0; data_files[i].filename != NULL; i++) {
-        if (data_files[i].num_records > 0) {
-            PF_DestroyFile(data_files[i].db_filename);
-        }
+
+    printf("Removing temporary DB files...\n");
+    for (int i = 0; datasets[i].text_path != NULL; ++i)
+    {
+        if (datasets[i].record_count > 0)
+            PF_DestroyFile(datasets[i].db_name);
     }
-    
-    // Close CSV files if open
-    if (csv_mode) {
-        if (csv_lru) {
-            fclose(csv_lru);
+
+    if (enable_csv)
+    {
+        if (out_csv_lru)
+        {
+            fclose(out_csv_lru);
             printf("\nCSV file generated: realdata_lru.csv\n");
         }
-        if (csv_mru) {
-            fclose(csv_mru);
+        if (out_csv_mru)
+        {
+            fclose(out_csv_mru);
             printf("CSV file generated: realdata_mru.csv\n");
         }
     }
-    
+
     printf("\nTest completed successfully!\n");
     return 0;
 }
